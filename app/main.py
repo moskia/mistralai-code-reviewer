@@ -1,5 +1,9 @@
 from fastapi import FastAPI
 import logging
+
+from dotenv import load_dotenv
+load_dotenv()
+
 from app.routes import router
 
 
