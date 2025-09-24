@@ -1,11 +1,5 @@
-
----
-
 ## Dockerfile
 
-(same as included above, placed separately at repo root)
-
-```dockerfile
 FROM python:3.10-slim
 
 WORKDIR /app
