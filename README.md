@@ -3,7 +3,7 @@
 An API that fetches a GitHub repository, summarizes its contents, and uses **Mistral AI** to generate a structured **code review**.
 Useful for quick project audits, candidate assignment reviews, or just exploring a repo’s quality/security.
 
-[![Tests](https://github.com/yourname/mistralai-code-reviewer/actions/workflows/tests.yml/badge.svg)](https://github.com/yourname/mistralai-code-reviewer/actions/workflows/tests.yml)
+[![Tests](https://github.com/moskia/mistralai-code-reviewer/actions/workflows/tests.yml/badge.svg)](https://github.com/moskia/mistralai-code-reviewer/actions/workflows/tests.yml)
 
 ---
 
@@ -105,30 +105,7 @@ You can also run the AI service directly with the helper script:
 python test_ai_service.py
 ```
 
----
-
-## 📝 Dockerfile
-
-```dockerfile
-FROM python:3.10-slim
-
-WORKDIR /app
-
-# install deps early for caching
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# copy app
-COPY . .
-
-EXPOSE 8000
-
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-```
-
----
-
-## 📌 Known Limitations
+# 📌 Known Limitations
 
 * Repos with **>50 files or >0.5 MB** of code are truncated for performance.
 * Only the first 80 lines of each file are sent to the model.
