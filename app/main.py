@@ -1,27 +1,16 @@
-from fastapi import FastAPI
 import logging
-
+from fastapi import FastAPI
 from dotenv import load_dotenv
+
 load_dotenv()
-
-from app.routes import router
-
-
+from app.routes import router  # noqa
 
 logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        handlers=[
-            logging.StreamHandler(),
-            logging.FileHandler("app.log")
-            ],
-        )
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.FileHandler("app.log"), logging.StreamHandler()],
+)
 
-app = FastAPI(
-        title="CodeReviewer",
-        description="An API to review codes using SDK",
-        version="1.0.0",
-        )
-
-
+app = FastAPI(title="CodeReviewer", version="1.0.0")
 app.include_router(router)
+

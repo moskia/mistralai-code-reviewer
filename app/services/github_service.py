@@ -1,73 +1,119 @@
-from app.utils import fetch_repo_contents, fetch_file_contents
-import logging
-import os
-from dotenv import load_dotenv
+import os, logging, base64, requests
+from urllib.parse import urlparse
+from fastapi import HTTPException
+from app.config import (
+    ALLOWED_EXTS, SECONDARY_EXTS, IGNORE_DIRS,
+    MAX_FILE_BYTES, MAX_TOTAL_BYTES, MAX_FILES, PREVIEW_LINES, DEFAULT_REF
+)
 
-load_dotenv()
 logger = logging.getLogger(__name__)
+TOKEN = os.getenv("GITHUB_TOKEN")
 
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-if not GITHUB_TOKEN:
-    raise ValueError("GITHUB_TOKEN not found in environment variables")
+def _headers():
+    return {"Authorization": f"token {TOKEN}"} if TOKEN else {}
 
+def _parse_repo(url: str):
+    if not url.startswith("https://github.com/"):
+        raise HTTPException(status_code=422, detail="Invalid GitHub URL")
+    parts = urlparse(url).path.strip("/").split("/")
+    if len(parts) < 2:
+        raise HTTPException(status_code=422, detail="Invalid GitHub URL")
+    owner, repo = parts[0], parts[1]
+    ref = DEFAULT_REF
+    if len(parts) >= 4 and parts[2] == "tree":
+        ref = parts[3]
+    return owner, repo, ref
 
-def check_if_cool(repo_url):  
-    """Check if the repo belongs to your GitHub or has special keywords."""
-    username = repo_url.split("/")[3]
-    if username.lower() == "moskia":
-        return True
-    if any(keyword in repo_url.lower() for keyword in ["ai", "security", "cloud"]):
-        return True
-    return False
+def _is_ignored(path: str) -> bool:
+    return any(path.startswith(d) for d in IGNORE_DIRS)
 
+def _ext(path: str) -> str:
+    i = path.rfind(".")
+    return path[i:].lower() if i != -1 else ""
 
-def fetch_repo_and_generate_message(repo_url):
-    logger.info(f"Fetching repository: {repo_url}")
-    api_url = repo_url.replace("https://github.com", "https://api.github.com/repos")
-    headers = {"Authorization": f"token {GITHUB_TOKEN}"}
+def fetch_repo_and_generate_message(repo_url: str) -> str:
+    owner, repo, ref = _parse_repo(repo_url)
 
-    try:
-        repo_files = fetch_repo_contents(f"{api_url}/contents", headers)
-    except Exception as e:
-        logger.error(f"Error fetching repository: {repo_url}, Error: {e}")
-        raise e
+    # existence check
+    meta = requests.get(f"https://api.github.com/repos/{owner}/{repo}", headers=_headers(), timeout=15)
+    if meta.status_code == 404:
+        raise HTTPException(status_code=404, detail="Repository not found")
+    if meta.status_code == 403:
+        raise HTTPException(status_code=429, detail="GitHub rate limit reached")
+    meta.raise_for_status()
 
-    file_contents = fetch_file_contents(repo_files, headers)
-    logger.debug(f"Response: {file_contents}")
+    # list tree
+    r = requests.get(
+        f"https://api.github.com/repos/{owner}/{repo}/git/trees/{ref}?recursive=1",
+        headers=_headers(), timeout=30
+    )
+    if r.status_code in (403, 404):
+        raise HTTPException(status_code=r.status_code, detail="Repo tree unavailable")
+    r.raise_for_status()
+    tree = r.json().get("tree", [])
+    if not tree:
+        raise HTTPException(status_code=204, detail="Repository empty")
 
-    # Build the message
-    message = f"📂 Repository Analysis for {repo_url}\n\n"
+    # filter candidates
+    candidates = []
+    for node in tree:
+        if node.get("type") != "blob":
+            continue
+        path = node["path"]
+        if _is_ignored(path):
+            continue
+        ext = _ext(path)
+        if ext in ALLOWED_EXTS or ext in SECONDARY_EXTS:
+            if node.get("size") and node["size"] > MAX_FILE_BYTES:
+                continue
+            candidates.append(node)
 
-    message += "📁 Files Retrieved:\n"
-    message += "\n".join(file["path"] for file in repo_files) + "\n\n"
+    if not candidates:
+        return "# Repository Files\n*(no eligible files matched)*"
 
-    message += "📝 File Contents (preview):\n"
-    for file_path, content in file_contents.items():
-        if file_path.endswith(".py"):
-            message += f"🐍 Python File: {file_path}\n{content[:200]}...\n\n"
-        elif file_path == "Dockerfile":
-            message += f"🐳 Dockerfile Detected: {file_path}\n{content[:200]}...\n\n"
-        elif file_path.lower() == "readme.md":
-            message += f"📖 README Found!\n{content[:200]}...\n\n"
+    # prioritize code
+    code = [n for n in candidates if _ext(n["path"]) in ALLOWED_EXTS]
+    meta_files = [n for n in candidates if _ext(n["path"]) in SECONDARY_EXTS]
+    ordered = sorted(code, key=lambda n: n["path"]) + sorted(meta_files, key=lambda n: n["path"])
+
+    # fetch previews
+    total_bytes, included = 0, 0
+    lines = ["# Repository Files"]
+    session = requests.Session(); session.headers.update(_headers())
+
+    for node in ordered:
+        if included >= MAX_FILES or total_bytes >= MAX_TOTAL_BYTES:
+            lines.append(f"\n*(truncated: {included} files, {total_bytes} bytes)*")
+            break
+
+        contents_url = f"https://api.github.com/repos/{owner}/{repo}/contents/{node['path']}?ref={ref}"
+        cr = session.get(contents_url, timeout=30)
+        if cr.status_code in (403, 404):
+            continue
+        cr.raise_for_status()
+        data = cr.json()
+        size = data.get("size", 0)
+        if size and size > MAX_FILE_BYTES:
+            continue
+
+        if data.get("encoding") == "base64" and "content" in data:
+            content = base64.b64decode(data["content"]).decode("utf-8", errors="replace")
         else:
-            message += f"📄 {file_path}\n{content[:200]}...\n\n"
+            if not data.get("download_url"):
+                continue
+            download = session.get(data["download_url"], timeout=30)
+            download.raise_for_status()
+            content = download.text
 
-    # Simple scoring system
-    score = 0
-    if "README.md" in file_contents:
-        score += 1
-    if "requirements.txt" in file_contents or "pyproject.toml" in file_contents:
-        score += 1
-    if any(f.endswith(".py") for f in file_contents):
-        score += 2
-    if "Dockerfile" in file_contents:
-        score += 1
+        byte_len = len(content.encode("utf-8"))
+        total_bytes += byte_len
+        included += 1
+        preview = "\n".join(content.splitlines()[:PREVIEW_LINES])
 
-    message += f"📊 Repo Quality Score: {score}/5\n"
+        lines.append(f"- `{node['path']}` ({byte_len} bytes)")
+        lines.append("```")
+        lines.append(preview)
+        lines.append("```")
 
-    # Add personalized note
-    if check_if_cool(repo_url):
-        message += "\n🌟 This repo is special! Made by a cool developer or matches key topics. Extra credit given!"
-
-    return message
+    return "\n".join(lines)
 

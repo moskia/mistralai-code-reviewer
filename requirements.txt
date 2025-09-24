@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+requests
+python-dotenv
+mistralai
+pydantic>=2
+pytest
+
