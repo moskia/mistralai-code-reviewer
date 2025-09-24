@@ -1,5 +1,6 @@
 import os
 import json
+import pytest
 import app.services.ai_service as ai
 
 

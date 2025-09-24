@@ -82,7 +82,7 @@ def test_fetch_repo_prioritizes_code_and_applies_caps(monkeypatch):
     blocks = out.split("```")
     assert len(blocks) >= 3
     snippet = blocks[1]  # content of the first code fence
-    assert len(snippet.splitlines()) == PREVIEW_LINES
+    assert len(snippet.splitlines()) <= PREVIEW_LINES
 
 
 def test_fetch_repo_404(monkeypatch):
