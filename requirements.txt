@@ -6,3 +6,4 @@ mistralai
 pydantic>=2
 pytest
 pytest-asyncio
+
